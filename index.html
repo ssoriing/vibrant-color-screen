@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Vibrant Color Screen | Interactive Animated Color Waves</title>
+
+<meta name="description"
+content="Create stunning vibrant color wave animations in fullscreen. Customize colors, speed, intensity and wave effects in real time.">
+
+<meta name="keywords"
+content="vibrant color screen, color screen, color waves, animated background, ambient colors, visualizer, color animation">
+
+<meta name="viewport"
+content="width=device-width, initial-scale=1.0">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#000; overflow:hidden; font-family: 'Segoe UI', sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; }
+
+  #ui {
+    position:fixed; bottom:32px; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; gap:16px;
+    background:rgba(0,0,0,0.35); backdrop-filter:blur(24px);
+    padding:16px 28px; border-radius:999px;
+    border:1px solid rgba(255,255,255,0.07);
+    transition: opacity 0.8s, transform 0.8s;
+    z-index:10;
+  }
+  #ui.hidden { opacity:0; pointer-events:none; transform:translateX(-50%) translateY(16px); }
+
+  .col-wrap { display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .col-wrap span { color:rgba(255,255,255,0.3); font-size:9px; letter-spacing:1.2px; text-transform:uppercase; }
+  input[type="color"] {
+    width:32px; height:32px; border:none; border-radius:50%;
+    cursor:pointer; padding:2px; background:transparent;
+  }
+  .sl-wrap { display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .sl-wrap span { color:rgba(255,255,255,0.3); font-size:9px; letter-spacing:1.2px; text-transform:uppercase; }
+  input[type="range"] { width:72px; accent-color:rgba(255,255,255,0.5); cursor:pointer; }
+
+  .divider { width:1px; height:30px; background:rgba(255,255,255,0.07); }
+
+  button {
+    background:rgba(255,255,255,0.05);
+    color:rgba(255,255,255,0.55);
+    border:1px solid rgba(255,255,255,0.1);
+    border-radius:10px; padding:8px 16px;
+    cursor:pointer; font-size:11px; letter-spacing:.5px;
+    transition:all .3s;
+  }
+  button:hover { background:rgba(255,255,255,0.12); color:rgba(255,255,255,0.9); }
+  #fsBtn { width:36px; height:36px; padding:0; border-radius:50%; font-size:15px; }
+</style>
+</head>
+<body>
+<h1 style="display:none;">Vibrant Color Screen</h1>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div class="col-wrap"><span>Color 1</span><input type="color" id="c1" value="#ff2266"></div>
+  <div class="col-wrap"><span>Color 2</span><input type="color" id="c2" value="#aa00ff"></div>
+  <div class="col-wrap"><span>Color 3</span><input type="color" id="c3" value="#0066ff"></div>
+  <div class="col-wrap"><span>Color 4</span><input type="color" id="c4" value="#ff8800"></div>
+  <div class="divider"></div>
+  <div class="sl-wrap"><span>Speed</span><input type="range" id="speed" min="1" max="30" value="3"></div>
+  <div class="sl-wrap"><span>Waves</span><input type="range" id="waves" min="1" max="10" value="4"></div>
+  <div class="sl-wrap"><span>Intensity</span><input type="range" id="intensity" min="1" max="10" value="5"></div>
+  <div class="sl-wrap"><span>Scale</span><input type="range" id="scale" min="1" max="10" value="5"></div>
+  <div class="divider"></div>
+  <button id="randBtn">✦ Random</button>
+  <button id="fsBtn">⛶</button>
+</div>
+
+<script id="vs" type="x-shader/x-vertex">
+attribute vec2 a_pos;
+void main(){ gl_Position=vec4(a_pos,0.,1.); }
+</script>
+
+<script id="fs" type="x-shader/x-fragment">
+precision highp float;
+uniform vec2  u_res;
+uniform float u_time;
+uniform float u_speed;
+uniform float u_waves;
+uniform float u_intensity;
+uniform float u_scale;
+uniform vec3  u_colors[4];
+
+vec2 hash2(vec2 p){
+  p=vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3)));
+  return -1.0+2.0*fract(sin(p)*43758.5453);
+}
+float gnoise(vec2 p){
+  vec2 i=floor(p); vec2 f=fract(p);
+  vec2 u=f*f*f*(f*(f*6.0-15.0)+10.0);
+  return mix(mix(dot(hash2(i+vec2(0,0)),f-vec2(0,0)),
+                 dot(hash2(i+vec2(1,0)),f-vec2(1,0)),u.x),
+             mix(dot(hash2(i+vec2(0,1)),f-vec2(0,1)),
+                 dot(hash2(i+vec2(1,1)),f-vec2(1,1)),u.x),u.y);
+}
+
+vec3 palette(float t){
+  t=clamp(t,0.,1.)*3.0;
+  float i=floor(t);
+  float f=smoothstep(0.,1.,fract(t));
+  if(i<1.0) return mix(u_colors[0],u_colors[1],f);
+  if(i<2.0) return mix(u_colors[1],u_colors[2],f);
+  return           mix(u_colors[2],u_colors[3],f);
+}
+
+// 원형 ripple: 한 중심에서 퍼지는 파동
+float ripple(vec2 uv, vec2 center, float freq, float speed, float t){
+  float d = length(uv - center);
+  return sin(d * freq - t * speed);
+}
+
+void main(){
+  // 화면 중앙 기준 정규화 UV (-0.5 ~ 0.5), 비율 보정
+  vec2 uv = gl_FragCoord.xy / u_res - 0.5;
+  uv.x *= u_res.x / u_res.y;
+
+  float t = u_time * u_speed * 0.00015;
+  float sc = u_scale * 0.18 + 0.3;
+  float warp = u_intensity * 0.13;
+  float wv = clamp(u_waves / 10.0, 0.0, 1.0);
+  float freq = u_waves * 0.25 + 1.5;
+
+  vec2 p = uv * sc;
+
+  // ── 원형 중심 5개 (화면 비율 보정된 좌표계) ──
+  vec2 cA = vec2( 0.0,   0.0);    // 정중앙
+  vec2 cB = vec2(-0.35,  0.0);    // 왼쪽
+  vec2 cC = vec2( 0.35,  0.0);    // 오른쪽
+  vec2 cD = vec2( 0.0,  -0.28);   // 아래
+  vec2 cE = vec2( 0.0,   0.28);   // 위
+
+  // ── 베이스: 중앙 + 좌우 큰 원형 파동 ──
+  float r1 = ripple(uv, cA, freq*3.2*sc, 1.1, t);
+  float r2 = ripple(uv, cB, freq*2.8*sc, 0.85, t*1.15);
+  float r3 = ripple(uv, cC, freq*3.0*sc, 0.95, t*0.9 + 1.0);
+
+  // ── 중앙 뒤틀린 ripple (intensity 에 따라 중심이 흔들림) ──
+  vec2 warpedCenter = cA + vec2(
+    sin(t*0.7)*warp*1.2,
+    cos(t*0.5)*warp*1.2
+  );
+  float r4 = ripple(uv, warpedCenter, freq*3.8*sc, 1.3, t*1.05);
+
+  // ── waves 올릴수록 추가되는 원형들 ──
+  float r5 = ripple(uv, cD, freq*2.5*sc, 0.75, t*1.2 + 0.5);
+  float r6 = ripple(uv, cE, freq*2.9*sc, 1.05, t*0.8 + 1.8);
+  // 두 중심이 천천히 궤도 이동
+  vec2 orbit1 = vec2(sin(t*0.4)*0.3, cos(t*0.3)*0.25);
+  vec2 orbit2 = vec2(cos(t*0.35)*0.28, sin(t*0.45)*0.22);
+  float r7 = ripple(uv, orbit1, freq*3.5*sc, 1.0, t*0.95 + 2.0);
+  float r8 = ripple(uv, orbit2, freq*3.2*sc, 1.15, t*1.1  + 3.5);
+
+  // 추가 궤도 ripple
+  vec2 orbit3 = vec2(sin(t*0.28)*0.4,  cos(t*0.22)*0.18);
+  vec2 orbit4 = vec2(cos(t*0.33)*0.18, sin(t*0.38)*0.38);
+  float r9  = ripple(uv, orbit3, freq*2.8*sc, 0.8, t*0.7  + 1.2);
+  float r10 = ripple(uv, orbit4, freq*3.0*sc, 1.2, t*1.25 + 4.1);
+
+  // 큰 노이즈 (색 덩어리 자연스럽게)
+  float n = gnoise(p + vec2(t*0.2, t*0.15));
+
+  // 파도 개수에 따라 추가 blend
+  float extra =
+    r5  * smoothstep(0.0,  0.2,  wv) * 0.7 +
+    r6  * smoothstep(0.1,  0.3,  wv) * 0.7 +
+    r7  * smoothstep(0.25, 0.45, wv) * 0.65 +
+    r8  * smoothstep(0.35, 0.55, wv) * 0.65 +
+    r9  * smoothstep(0.5,  0.7,  wv) * 0.5  +
+    r10 * smoothstep(0.65, 0.9,  wv) * 0.5;
+
+  float total = (r1*1.2 + r2*1.0 + r3*1.0 + r4*0.9 + extra + n*0.7);
+  float divisor = 4.1 + 4.0*wv + 0.7;
+  float val = (total / divisor + 1.0) * 0.5;
+  val = smoothstep(0.05, 0.95, val);
+
+  vec3 col = palette(val);
+
+  float lum = dot(col, vec3(0.299,0.587,0.114));
+  col = mix(vec3(lum), col, 1.3);
+
+  // 비네트 (원형으로 자연스럽게)
+  float d = length(uv) / 0.72;
+  col *= 1.0 - d*d*0.25;
+
+  col = pow(clamp(col,0.,1.), vec3(0.88));
+  gl_FragColor = vec4(col, 1.0);
+}
+</script>
+
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl');
+
+function compile(type,src){
+  const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); return s;
+}
+const prog=gl.createProgram();
+gl.attachShader(prog,compile(gl.VERTEX_SHADER,  document.getElementById('vs').text));
+gl.attachShader(prog,compile(gl.FRAGMENT_SHADER,document.getElementById('fs').text));
+gl.linkProgram(prog); gl.useProgram(prog);
+
+const buf=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+const aPos=gl.getAttribLocation(prog,'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+
+const uRes       = gl.getUniformLocation(prog,'u_res');
+const uTime      = gl.getUniformLocation(prog,'u_time');
+const uSpeed     = gl.getUniformLocation(prog,'u_speed');
+const uWaves     = gl.getUniformLocation(prog,'u_waves');
+const uIntensity = gl.getUniformLocation(prog,'u_intensity');
+const uScale     = gl.getUniformLocation(prog,'u_scale');
+const uCols      = [0,1,2,3].map(i=>gl.getUniformLocation(prog,`u_colors[${i}]`));
+
+function hexRGB(h){
+  return[parseInt(h.slice(1,3),16)/255,parseInt(h.slice(3,5),16)/255,parseInt(h.slice(5,7),16)/255];
+}
+function randHex(){return'#'+Math.floor(Math.random()*0xffffff).toString(16).padStart(6,'0');}
+
+const pickers  = ['c1','c2','c3','c4'].map(id=>document.getElementById(id));
+const speedEl  = document.getElementById('speed');
+const wavesEl  = document.getElementById('waves');
+const intensEl = document.getElementById('intensity');
+const scaleEl  = document.getElementById('scale');
+const ui       = document.getElementById('ui');
+
+const fsBtn=document.getElementById('fsBtn');
+fsBtn.addEventListener('click',()=>{
+  if(!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+});
+document.addEventListener('fullscreenchange',()=>{
+  if(document.fullscreenElement){fsBtn.textContent='✕';ui.classList.add('hidden');}
+  else{fsBtn.textContent='⛶';ui.classList.remove('hidden');}
+});
+let hideTimer;
+document.addEventListener('mousemove',()=>{
+  if(!document.fullscreenElement) return;
+  ui.classList.remove('hidden');
+  clearTimeout(hideTimer);
+  hideTimer=setTimeout(()=>ui.classList.add('hidden'),2500);
+});
+
+document.getElementById('randBtn').addEventListener('click',()=>{
+  pickers.forEach(p=>p.value=randHex());
+});
+
+function resize(){
+  canvas.width =window.innerWidth *devicePixelRatio;
+  canvas.height=window.innerHeight*devicePixelRatio;
+  gl.viewport(0,0,canvas.width,canvas.height);
+}
+window.addEventListener('resize',resize); resize();
+
+function render(t){
+  gl.uniform2f(uRes,canvas.width,canvas.height);
+  gl.uniform1f(uTime,      t);
+  gl.uniform1f(uSpeed,     parseFloat(speedEl.value));
+  gl.uniform1f(uWaves,     parseFloat(wavesEl.value));
+  gl.uniform1f(uIntensity, parseFloat(intensEl.value));
+  gl.uniform1f(uScale,     parseFloat(scaleEl.value));
+  pickers.forEach((p,i)=>gl.uniform3fv(uCols[i],hexRGB(p.value)));
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
